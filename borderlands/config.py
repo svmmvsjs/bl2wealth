@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Union, Optional, List, Callable, Any, Dict
+from typing import List
 
 
 class Config(argparse.Namespace):
@@ -10,7 +10,6 @@ class Config(argparse.Namespace):
 
     # Given by the user, booleans
     json = False
-    big_endian = False
     verbose = True
     force = False
 
@@ -19,18 +18,8 @@ class Config(argparse.Namespace):
     input_filename = '-'
     output_filename = '-'
 
-    # Former 'modify' options
-    money = None
-    eridium = None
-    seraph = None
-    torgue = None
-
-    unlock: Dict[str, Any] = {}
-    fix_challenge_overflow = False
-
     # Config options interpreted from the above
     endian = '<'
-    changes = False
 
     def finish(
         self,
@@ -43,13 +32,6 @@ class Config(argparse.Namespace):
         errors.  "app" is an App object which we use for a couple
         lookups.
         """
-
-        # byte order
-        if self.big_endian:
-            self.endian = '>'
-        else:
-            self.endian = '<'
-
         # Can't read/write to the same file
         if (
             self.output_filename is not None
@@ -88,10 +70,6 @@ class DictAction(argparse.Action):
 def parse_args(
     *,
     args: List[str],
-    setup_currency_args: Callable[[argparse.ArgumentParser], None],
-    setup_game_specific_args: Callable[[argparse.ArgumentParser], None],
-    game_name: str,
-    unlock_choices: List[str],
 ):
     """
     Parse our arguments.
@@ -100,12 +78,11 @@ def parse_args(
     config = Config()
 
     parser = argparse.ArgumentParser(
-        description=f'Modify {game_name} Save Files',
+        description=f'Start Parsing',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # Optional args
-
     parser.add_argument(
         '-o',
         '--output',
@@ -125,53 +102,13 @@ def parse_args(
     )
 
     parser.add_argument(
-        '-b',
-        '--bigendian',
-        action='store_true',
-        dest='big_endian',
-        help='change the output format to big-endian, to write PS/xbox save files',
-    )
-
-    # TODO: rewrite with "-v/--verbose"
-    parser.add_argument(
-        '-q',
-        '--quiet',
-        dest='verbose',
-        action='store_false',
-        help='quiet output (should generate no output unless there are errors)',
-    )
-
-    parser.add_argument(
         '-f',
         '--force',
         action='store_true',
         help='force output file overwrite, if the destination file exists',
     )
 
-    parser.add_argument(
-        '--money',
-        type=int,
-        help='Money to set for character',
-    )
-
-    setup_currency_args(parser)
-
-    parser.add_argument(
-        '--unlock',
-        action=DictAction,
-        choices=unlock_choices,
-        default={},
-        help='Game features to unlock',
-    )
-
-    parser.add_argument(
-        '--fix-challenge-overflow',
-        action='store_true',
-        help='Fix values for challenges which appear as huge negative numbers',
-    )
-
     # Positional args
-
     parser.add_argument('input_filename', help='Input filename, can be "-" to specify STDIN')
 
     parser.add_argument(
@@ -182,9 +119,6 @@ def parse_args(
                 which case no output file is produced.
                 """,
     )
-
-    # Additional game-specific arguments
-    setup_game_specific_args(parser)
 
     # Actually parse the args
     parser.parse_args(args, config)

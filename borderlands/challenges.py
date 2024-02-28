@@ -28,17 +28,17 @@ class Challenge:
     """
 
     def __init__(
-        self,
-        *,
-        position: int,
-        identifier: int,
-        id_text: str,
-        category: ChallengeCategory,
-        name: str,
-        description: str,
-        levels: Tuple[int, ...],
-        bonus: Optional[int] = None,
-        bl2_is_in_challenge_accepted: bool = False,
+            self,
+            *,
+            position: int,
+            identifier: int,
+            id_text: str,
+            category: ChallengeCategory,
+            name: str,
+            description: str,
+            levels: Tuple[int, ...],
+            bonus: Optional[int] = None,
+            bl2_is_in_challenge_accepted: bool = False,
     ) -> None:
         self.position = position
         self.identifier = identifier
@@ -116,7 +116,7 @@ def unwrap_challenges(*, data: bytes, challenges: Dict[int, Challenge], endian: 
         challenge_dict = dict(
             zip(
                 ['id', 'first_one', 'total_value', 'second_one', 'previous_value'],
-                struct.unpack(endian + 'HBIBI', data[idx : idx + 12]),
+                struct.unpack(endian + 'HBIBI', data[idx: idx + 12]),
             )
         )
         challenges_result.append(challenge_dict)

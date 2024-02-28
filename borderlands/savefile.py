@@ -1,4 +1,3 @@
-import argparse
 import base64
 import binascii
 import dataclasses
@@ -14,7 +13,7 @@ from borderlands.challenges import Challenge, unwrap_challenges, wrap_challenges
 from borderlands.config import parse_args
 from borderlands.util.bitstreams import ReadBitstream, WriteBitstream
 from borderlands.util.common import conv_binary_to_str, rotate_data_right, xor_data, create_body
-from borderlands.util.common import invert_structure, replace_raw_item_key
+from borderlands.util.common import invert_structure
 from borderlands.util.data_types import PlayerDict
 from borderlands.util.errors import BorderlandsError
 from borderlands.util.huffman import (
@@ -64,18 +63,11 @@ class BaseApp:
             *,
             args: List[str],
             item_struct_version: int,
-            game_name: str,
-            item_prefix: str,
             black_market_keys: Tuple[str, ...],
-            unlock_choices: List[str],  # Available choices for --unlock option
             challenges: Dict[int, Challenge],
     ) -> None:
-        # B2 version is 7
+        # BL2 version is 7
         self.item_struct_version = item_struct_version
-
-        # Item export/import prefix
-        self.item_prefix = item_prefix
-
         self.black_market_keys = black_market_keys
 
         # There are two possible ways of uniquely identifying challenges in this file:
@@ -100,10 +92,6 @@ class BaseApp:
         # Parse Arguments
         self.config = parse_args(
             args=args,
-            setup_currency_args=self.setup_currency_args,
-            setup_game_specific_args=self.setup_game_specific_args,
-            game_name=game_name,
-            unlock_choices=unlock_choices,
         )
 
         # Sets up our main save_structure var which controls how we read the file
@@ -264,156 +252,30 @@ class BaseApp:
 
         return hashlib.sha1(data).digest() + data
 
-    def show_save_info(self, data: bytes) -> None:
-        """
-        Shows information from file data, based on our config object.
-        "data" should be the raw data from a save file.
-
-        Note that if a user is both showing info and making changes,
-        we're parsing the protobuf twice, since modify_save also does
-        that.  Inefficiency!
-        """
-        player = read_protobuf(self.unwrap_player_data(data))
-        self._show_save_info(player)
-
-    def _show_save_info(self, player: PlayerDict) -> None:
-        return
-
-    def _set_money(self, player: PlayerDict) -> None:
-        if all(
-                x is None
-                for x in [
-                    self.config.money,
-                    self.config.eridium,
-                    self.config.seraph,
-                    self.config.torgue,
-                ]
-        ):
-            return
-
+    def _get_rich(self, player: PlayerDict) -> None:
         raw = player[6][0][1]
         b = io.BytesIO(raw)
         values = []
         while b.tell() < len(raw):
             values.append(read_protobuf_value(b, 0))
-        if self.config.money is not None:
-            self.debug(f' - Setting available $$$ to {self.config.money}')
-            values[0] = self.config.money
-        if self.config.eridium is not None:
-            self.debug(f' - Setting available Eridium to {self.config.eridium}')
-            values[1] = self.config.eridium
-        if self.config.seraph is not None:
-            self.debug(f' - Setting available Seraph Crystals to {self.config.seraph}')
-            values[2] = self.config.seraph
-        if self.config.torgue is not None:
-            self.debug(f' - Setting available Torgue Tokens to {self.config.torgue}')
-            values[4] = self.config.torgue
+
+        self.debug(f' - Setting Money to 99 999 999')
+        values[0] = 99999999
+        self.debug(f' - Setting Eridium to 500')
+        values[1] = 500
+        self.debug(f' - Setting Seraph Crystals to 999')
+        values[2] = 999
+        self.debug(f' - Setting Torgue Tokens to 999')
+        values[4] = 999
         player[6][0] = [0, values]
 
-    def _unlock_features(self, player: PlayerDict) -> None:
-        if not self.config.unlock:
-            return
-
-        if 'slaughterdome' not in self.config.unlock:
-            return
-
-        unlocked, notifications = b'', b''
-        if 23 in player:
-            unlocked = player[23][0][1]
-        if 24 in player:
-            notifications = player[24][0][1]
-        self.debug(' - Unlocking Creature Slaughterdome')
-        if 1 not in unlocked:
-            unlocked += b"\x01"
-        if 1 not in notifications:
-            notifications += b"\x01"
-        player[23] = [[2, unlocked]]
-        player[24] = [[2, notifications]]
-
-    def _fix_challenge_overflow(self, player: PlayerDict) -> None:
-        # TODO: rewrite as standalone function and move to bl2_routines.py
-        if not self.config.fix_challenge_overflow:
-            return
-
-        self.notice('Fix challenge overflow')
-        data2 = self.unwrap_challenges(player[15][0][1])
-
-        for save_challenge in data2['challenges']:
-            if save_challenge['id'] in self.challenges:
-                if save_challenge['total_value'] >= 2000000000:
-                    self.notice(f'fix overflow in: {save_challenge["_name"]}')
-                    save_challenge['total_value'] = self.challenges[save_challenge['id']].get_max() + 1
-
-        player[15][0][1] = self.wrap_challenges(data2)
-
     def modify_save(self, data: bytes) -> bytes:
-        """
-        Performs a set of modifications on file data, based on our
-        config object.  "data" should be the raw data from a save
-        file.
-
-        Note that if a user is both showing info and making changes,
-        we're parsing the protobuf twice, since show_save_info also does
-        that.  Inefficiency!
-        """
-
         player = read_protobuf(self.unwrap_player_data(data))
-
-        self._set_money(player)
-        self._unlock_features(player)
-
-        self._fix_challenge_overflow(player)
-        self._reset_challenge_or_mission(player)
-
+        self._get_rich(player)
         return self.wrap_player_data(write_protobuf(player))
-
-    def export_items(self, data, output) -> None:
-        """
-        Exports items stored in savegame data 'data' to the open
-        filehandle 'output'
-        """
-        player = read_protobuf(self.unwrap_player_data(data))
-        skipped_count = 0
-        for i, name in ((41, "Bank"), (53, "Items"), (54, "Weapons")):
-            count = 0
-            content = player.get(i)
-            if content is None:
-                continue
-            print(f'; {name}', file=output)
-            for field in content:
-                raw: bytes = read_protobuf(field[1])[1][0][1]
-
-                # Borderlands uses some sort-of "fake" items to store some DLC
-                # data.  As per the Gibbed sourcecode, this includes:
-                #   1. "Currency On Hand"  (?)
-                #   2. Last Playthrough Number / Playthroughs completed
-                #   3. "Has played in UVHM"
-                #   4. Overpower levels unlocked
-                #   5. Last Overpower selection
-                #
-                # The data for these is stored in the `unknown2` field, by this
-                # app's data definitions (or the protobuf [2] index).  Regardless,
-                # these aren't actual items, so we're skipping them.  See Gibbed
-                # Gibbed.Borderlands2.FileFormats/SaveExpansion.cs for details
-                # on how to parse the `unknown2` field.
-                is_weapon, item, key = self.unwrap_item(raw)
-                if item[0] == 255 and all([val == 0 for val in item[1:]]):
-                    skipped_count += 1
-                else:
-                    count += 1
-                    raw_bytes = replace_raw_item_key(raw, 0)
-                    printable = base64.b64encode(raw_bytes).decode("latin1")
-                    code = f'{self.item_prefix}({printable})'
-                    print(code, file=output)
-            self.debug(f' - {name} exported: {count}')
 
     def create_save_structure(self) -> Dict[int, Any]:
         raise NotImplementedError()
-
-    @staticmethod
-    def setup_game_specific_args(parser: argparse.ArgumentParser) -> None:
-        """Function to add game-specific arguments."""
-        pass
 
     @staticmethod
     def notice(message) -> None:
@@ -463,7 +325,6 @@ class BaseApp:
                 self.debug(f'Overwriting output file {outfile!r}')
                 os.unlink(outfile)
             else:
-                # TODO: what is the point of checking input file name?
                 if self.config.input_filename == '-':
                     raise BorderlandsError(
                         f'Output filename {outfile!r}' + ' exists and --force not specified, aborting'
@@ -490,9 +351,6 @@ class BaseApp:
         output_file = open(outfile, mode)
         return output_file, True
 
-    def _reset_challenge_or_mission(self, player: PlayerDict) -> None:
-        pass
-
     def run(self):
         """
         loads data, modifies it, and then outputs new file
@@ -504,10 +362,7 @@ class BaseApp:
         # If we're reading from JSON, convert it
         save_data = self._convert_json(save_data)
 
-        self.debug('Performing requested changes')
         new_data = self.modify_save(save_data)
-
-        self.show_save_info(new_data)
 
         # If we have an output file, write to it
         if self.config.output_filename is None:
@@ -524,10 +379,7 @@ class BaseApp:
         output_file, close = output_file_info
 
         # Now output based on what we've been told to do
-        if self.config.output == 'items':
-            self.debug('Exporting items')
-            self.export_items(new_data, output_file)
-        elif self.config.output == 'savegame':
+        if self.config.output == 'savegame':
             self.debug('Writing savegame file')
             output_file.write(new_data)
         else:
@@ -544,7 +396,3 @@ class BaseApp:
             output_file.close()
 
         self.notice('Done')
-
-    @staticmethod
-    def setup_currency_args(parser) -> None:
-        raise NotImplementedError()
